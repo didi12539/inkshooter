@@ -54,13 +54,14 @@
             overflow: hidden;
             z-index: 10; 
             
+            /* 【关键修复】指定高度防止塌陷 */
             height: 90vh; 
             width: auto;
             aspect-ratio: 400/700;
             max-width: 95vw; 
+            transform: translateZ(0);
         }
 
-        /* 画布统一样式：绝对定位以重叠 */
         canvas {
             display: block;
             position: absolute; 
@@ -82,6 +83,22 @@
         #gameCanvas {
             z-index: 5;
             filter: contrast(1.05) brightness(1.1);
+        }
+
+        /* 移动端高性能模式 */
+        body.mobile-mode #inkCanvas {
+            filter: none !important; 
+            opacity: 0.6 !important;
+        }
+        body.mobile-mode #gameCanvas {
+            filter: none !important;
+        }
+        body.mobile-mode .crt-overlay {
+            display: none !important; 
+        }
+        body.mobile-mode #game-container {
+            box-shadow: none !important; 
+            border: 1px solid #444;
         }
 
         .crt-overlay {
@@ -309,23 +326,9 @@
             0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
             100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
         }
-        
-        /* 调试控制台 (仅在出错时显示) */
-        #debug-console {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: auto;
-            background: rgba(0,0,0,0.8);
-            color: red;
-            font-size: 12px;
-            z-index: 9999;
-            pointer-events: none;
-            display: none;
-        }
     </style>
 </head>
 <body>
-    
-    <div id="debug-console"></div>
     
     <!-- SVG Filter for Liquid Effect -->
     <svg style="position: absolute; width: 0; height: 0;" xmlns="http://www.w3.org/2000/svg">
@@ -399,20 +402,20 @@
             document.body.classList.add('mobile-mode');
         }
         
-        // 简单的错误捕获
         window.onerror = function(msg, url, line) {
-            // Uncomment to debug on mobile
-            // const debugEl = document.getElementById('debug-console');
-            // if(debugEl) {
-            //     debugEl.style.display = 'block';
-            //     debugEl.innerHTML += `Error: ${msg} at ${line} <br>`;
-            // }
+            // console.error(`Error: ${msg} at ${line}`);
         };
 
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const inkCanvas = document.getElementById('inkCanvas');
         const inkCtx = inkCanvas.getContext('2d');
+
+        // 核心优化：锁定内部渲染分辨率
+        canvas.width = 400;
+        canvas.height = 700;
+        inkCanvas.width = 400;
+        inkCanvas.height = 700;
 
         const scoreEl = document.getElementById('score');
         const highScoreEl = document.getElementById('high-score'); 
@@ -436,11 +439,21 @@
         const DEAD_LINE_ROW = GRID_ROWS - 2;
         const DEAD_LINE_Y = (DEAD_LINE_ROW * ROW_HEIGHT) + 20;
 
+        const MAX_INK_SPLATS = isMobile ? 10 : 25;
+        const PARTICLE_COUNT = isMobile ? 4 : 8;
+
         const DEFAULT_PLACEHOLDER = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqVqWJAAAAf0lEQVR4Xu3RAQQAIAzDMPj/pHIBA7k7/y5N7kQAAAAAAAAAAACgV42zL8/15Y4X7v3o5J32u/2T2fD1c1e/AAAAAAAAAAAAoF/l/Qn/J5EAAAAAAAAAAACgX+UAAAAAAAAAAAAAwK/yAQAAAAAAAAAAANBfXgAAAAAAAAAAAACgV3IAAAAAAAAAAAAAYG/f8/F1Y4j/n/kAAAAASUVORK5CYII=";
-        const GLOBAL_AVATAR_URL_1 = DEFAULT_PLACEHOLDER; 
-        const GLOBAL_AVATAR_URL_2 = DEFAULT_PLACEHOLDER; 
+        
+        // ================== 图片配置区域 (为每个球分配独立位置) ==================
+        const IMG_PINK = DEFAULT_PLACEHOLDER; 
+        const IMG_GREEN = DEFAULT_PLACEHOLDER;
+        const IMG_BLUE = DEFAULT_PLACEHOLDER;
+        const IMG_ORANGE = DEFAULT_PLACEHOLDER;
+        const IMG_PURPLE = DEFAULT_PLACEHOLDER;
+        
         const BGM_CUSTOM_URL = "data:audio/mp3;base64,PLACEHOLDER_NO_BGM"; 
 
+        // 全局状态变量
         let audioCtx = null; 
         let gridOffset = 0; 
         let grid = []; 
@@ -476,39 +489,29 @@
         let audioBufferBGM = null;
         let isMuted = false;
 
-        let sharedAvatarImage1 = new Image();
-        let sharedAvatarImage2 = new Image();
-        let isImage1Loaded = false;
-        let isImage2Loaded = false;
-        let isImageLoaded = false;
+        // 图片缓存对象 (Key 是 id)
+        const characterImages = {};
 
         const CHARACTERS = [
-            { id: 'pink',   color: '#FF007F', name: 'Callie', imgKey: 'img1' },   
-            { id: 'green',  color: '#00FF21', name: 'Marie', imgKey: 'img1' },    
-            { id: 'blue',   color: '#00BFFF', name: 'Boy', imgKey: 'img1' },     
-            { id: 'orange', color: '#FF9900', name: 'Girl', imgKey: 'img2' },   
-            { id: 'purple', color: '#9933FF', name: 'Octo', imgKey: 'img2' }      
+            { id: 'pink',   color: '#FF007F', name: 'Callie', imgVar: IMG_PINK },   
+            { id: 'green',  color: '#00FF21', name: 'Marie', imgVar: IMG_GREEN },    
+            { id: 'blue',   color: '#00BFFF', name: 'Boy', imgVar: IMG_BLUE },     
+            { id: 'orange', color: '#FF9900', name: 'Girl', imgVar: IMG_ORANGE },   
+            { id: 'purple', color: '#9933FF', name: 'Octo', imgVar: IMG_PURPLE }      
         ];
 
         function loadImages() {
-            const setupImage = (url, imgObj, imgIndex) => {
-                if (url === DEFAULT_PLACEHOLDER) {
-                    return; 
+            CHARACTERS.forEach(char => {
+                const src = char.imgVar;
+                if (src && src !== DEFAULT_PLACEHOLDER && src.startsWith("data:image")) {
+                    const img = new Image();
+                    img.src = src;
+                    img.onload = () => { characterImages[char.id] = { loaded: true, img: img }; };
+                    img.onerror = () => { characterImages[char.id] = { loaded: false }; };
+                } else {
+                    characterImages[char.id] = { loaded: false };
                 }
-                imgObj.src = url;
-                imgObj.onload = () => {
-                    if (imgIndex === 1) isImage1Loaded = true;
-                    if (imgIndex === 2) isImage2Loaded = true;
-                    isImageLoaded = isImage1Loaded || isImage2Loaded;
-                };
-                imgObj.onerror = () => {
-                    if (imgIndex === 1) isImage1Loaded = false;
-                    if (imgIndex === 2) isImage2Loaded = false;
-                    isImageLoaded = isImage1Loaded || isImage2Loaded;
-                };
-            };
-            setupImage(GLOBAL_AVATAR_URL_1, sharedAvatarImage1, 1);
-            setupImage(GLOBAL_AVATAR_URL_2, sharedAvatarImage2, 2);
+            });
         }
         loadImages();
         
@@ -532,7 +535,6 @@
         }
         initHighScore();
 
-        // 兼容性修复：Web Audio API
         const AudioContext = window.AudioContext || window.webkitAudioContext;
 
         async function initAudio() {
@@ -658,7 +660,6 @@
             startOverlay.classList.add('active');
         }
 
-        // --- 核心修复：更健壮的启动逻辑 (Click Event Only for Stability) ---
         const handleStartGame = (e) => {
             if (e) {
                 if(e.cancelable) e.preventDefault();
@@ -676,7 +677,6 @@
                     audioCtx.resume();
                 }
 
-                // 播放静音片段，强制激活
                 const buffer = audioCtx.createBuffer(1, 1, 22050);
                 const source = audioCtx.createBufferSource();
                 source.buffer = buffer;
@@ -687,19 +687,15 @@
                     playBGM();
                 });
             } catch (err) {
-                console.warn("Audio error:", err);
+                console.warn("Audio context unlock failed, playing without sound.", err);
             }
 
             startCountdown();
         };
 
         if (startBtn) {
-            // 使用 click 保证触发，touchstart 优化延迟
+            startBtn.addEventListener('touchstart', handleStartGame, { passive: false });
             startBtn.addEventListener('click', handleStartGame);
-            startBtn.addEventListener('touchend', (e) => {
-                 e.preventDefault(); 
-                 startBtn.click();
-            });
         }
         
         function startCountdown() {
@@ -902,7 +898,7 @@
             }
             
             inkSplats.push(splat);
-            if (inkSplats.length > 25) inkSplats.shift(); 
+            if (inkSplats.length > MAX_INK_SPLATS) inkSplats.shift(); 
         }
 
         function updateInkSplats() {
@@ -929,6 +925,8 @@
         }
 
         function drawInkSplatsHighlights(ctx) {
+             if (isMobile) return;
+
              ctx.save();
              inkSplats.forEach(s => {
                 ctx.globalAlpha = s.life * 0.3;
@@ -1016,7 +1014,7 @@
         }
         
         function triggerShake(intensity) {
-            shakeDuration = intensity;
+            shakeDuration = isMobile ? intensity * 0.5 : intensity;
         }
 
         function updateShake() {
@@ -1265,12 +1263,10 @@
             let imgToDraw;
             let isCurrentImgLoaded;
             
-            if (char.imgKey === 'img1') {
-                imgToDraw = sharedAvatarImage1;
-                isCurrentImgLoaded = isImage1Loaded; 
-            } else {
-                imgToDraw = sharedAvatarImage2;
-                isCurrentImgLoaded = isImage2Loaded;
+            let charData = characterImages[char.id];
+            if (charData && charData.loaded) {
+                imgToDraw = charData.img;
+                isCurrentImgLoaded = true;
             }
 
             if (isCurrentImgLoaded) {
@@ -1286,16 +1282,18 @@
                 ctx.restore();
             }
 
-            const gradient = ctx.createRadialGradient(-size*0.3, -size*0.3, size*0.2, 0, 0, size);
-            gradient.addColorStop(0, "rgba(255,255,255,0.2)"); 
-            gradient.addColorStop(1, "rgba(0,0,0,0.2)");
-            ctx.fillStyle = gradient;
-            ctx.beginPath(); ctx.arc(0, 0, size, 0, Math.PI * 2); ctx.fill();
+            if (!isMobile) {
+                const gradient = ctx.createRadialGradient(-size*0.3, -size*0.3, size*0.2, 0, 0, size);
+                gradient.addColorStop(0, "rgba(255,255,255,0.3)"); 
+                gradient.addColorStop(1, "rgba(0,0,0,0.1)");
+                ctx.fillStyle = gradient;
+                ctx.beginPath(); ctx.arc(0, 0, size, 0, Math.PI * 2); ctx.fill();
 
-            ctx.beginPath();
-            ctx.ellipse(-size*0.4, -size*0.4, size*0.3, size*0.2, Math.PI/4, 0, Math.PI*2);
-            ctx.fillStyle = "rgba(255, 255, 255, 0.5)"; 
-            ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(-size*0.4, -size*0.4, size*0.3, size*0.2, Math.PI/4, 0, Math.PI*2);
+                ctx.fillStyle = "rgba(255, 255, 255, 0.6)"; 
+                ctx.fill();
+            }
             
             ctx.beginPath();
             ctx.arc(0, 0, size, 0, Math.PI * 2);
@@ -1340,7 +1338,7 @@
             triggerShake(3); 
             createInkSplat(x, y, color);
             
-            for(let i=0; i<8; i++) { 
+            for(let i=0; i<PARTICLE_COUNT; i++) { 
                 particles.push({
                     x: x,
                     y: y,
@@ -1385,20 +1383,18 @@
                 const pulse = Math.sin(Date.now() / 100) * 0.5 + 0.5;
                 ctx.strokeStyle = `rgba(255, 0, 85, ${0.5 + pulse * 0.5})`;
                 ctx.lineWidth = 4 + pulse * 2;
-                ctx.shadowBlur = 20;
+                ctx.shadowBlur = isMobile ? 0 : 20; 
             } else {
                 ctx.strokeStyle = "#ff0055"; 
                 ctx.lineWidth = 4; 
-                ctx.shadowBlur = 10;
+                ctx.shadowBlur = isMobile ? 0 : 10;
             }
 
             ctx.setLineDash([15, 10]);
-            ctx.shadowColor = "#ff0055"; 
             ctx.stroke();
             
             ctx.fillStyle = "#ff0055";
             ctx.font = "bold 16px Courier New";
-            ctx.shadowBlur = 0;
             ctx.fillText("DANGER ZONE", 10, y - 10);
             ctx.restore();
         }
@@ -1417,8 +1413,10 @@
             ctx.strokeStyle = "rgba(0, 255, 204, 0.6)"; 
             ctx.setLineDash([15, 10]); 
             ctx.lineWidth = 3;
-            ctx.shadowBlur = 8;
-            ctx.shadowColor = "#00ffcc";
+            if(!isMobile) {
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = "#00ffcc";
+            }
             ctx.beginPath();
             ctx.moveTo(startX, startY);
             
@@ -1487,7 +1485,7 @@
             
             if (gameState === 'COUNTDOWN') {
                 drawInkSplatsBackground(inkCtx);
-                drawInkSplatsHighlights(ctx);
+                if (!isMobile) drawInkSplatsHighlights(ctx);
                 drawDeadLine();
                 for (let r = 0; r < GRID_ROWS; r++) {
                     for (let c = 0; c < GRID_COLS; c++) {
@@ -1623,7 +1621,7 @@
             }
             
             drawInkSplatsBackground(inkCtx);
-            drawInkSplatsHighlights(ctx);
+            if (!isMobile) drawInkSplatsHighlights(ctx);
             
             drawDeadLine();
             
@@ -1745,12 +1743,13 @@
                 if(e.cancelable) e.preventDefault();
                 swapBubbles();
             } else if (!currentBubble.moving) {
-                 // 【核心修复】发射前先更新角度指向点击位置
+                 // 只要点击在 canvas 区域内（除了底部交换区）都算发射
+                 if(e.cancelable) e.preventDefault();
+                 
+                 // 发射前再次更新角度，确保“指哪打哪”
                  const dx = pos.x - currentBubble.x;
                  const dy = pos.y - currentBubble.y;
                  let angle = Math.atan2(dy, dx);
-                 
-                 // 应用同样的角度限制逻辑
                  if (angle > 0 && angle < Math.PI) {
                     if (angle > Math.PI / 2) angle = -Math.PI + 0.2;
                     else angle = -0.2;
@@ -1759,8 +1758,7 @@
                      if (angle < -Math.PI + 0.2) angle = -Math.PI + 0.2;
                  }
                  currentBubble.angle = angle;
-
-                 if(e.cancelable) e.preventDefault();
+                 
                  SFX.shoot();
                  currentBubble.moving = true;
             }
