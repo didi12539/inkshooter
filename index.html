@@ -2,9 +2,8 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <!-- 关键修复：禁用缩放，适配 iOS 视口 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>墨水射手 - Retro CRT Style</title>
+    <title>墨水射手 - Vector Ink Style</title>
     <style>
         body {
             margin: 0;
@@ -28,10 +27,9 @@
             color: white;
             overflow: hidden;
             user-select: none;
-            -webkit-user-select: none; /* iOS Safari */
+            -webkit-user-select: none;
             -webkit-touch-callout: none;
             box-shadow: inset 0 0 200px rgba(0,0,0,0.8);
-            /* 禁止触摸默认行为 */
             touch-action: none;
         }
 
@@ -56,13 +54,13 @@
             overflow: hidden;
             z-index: 10; 
             
-            height: 90vh;
-            height: 90dvh;
+            height: 90vh; 
             width: auto;
             aspect-ratio: 400/700;
             max-width: 95vw; 
         }
 
+        /* 画布统一样式：绝对定位以重叠 */
         canvas {
             display: block;
             position: absolute; 
@@ -72,7 +70,6 @@
             height: 100%;
             cursor: crosshair;
             filter: contrast(1.05) brightness(1.1);
-            /* 防止 iOS 点击高亮 */
             -webkit-tap-highlight-color: transparent;
         }
 
@@ -178,7 +175,6 @@
             justify-content: center;
             transition: all 0.2s;
             box-shadow: 0 0 10px rgba(0, 255, 230, 0.2);
-            /* 防止 iOS 双击缩放 */
             touch-action: manipulation;
         }
 
@@ -313,9 +309,23 @@
             0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
             100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
         }
+        
+        /* 调试控制台 (仅在出错时显示) */
+        #debug-console {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: auto;
+            background: rgba(0,0,0,0.8);
+            color: red;
+            font-size: 12px;
+            z-index: 9999;
+            pointer-events: none;
+            display: none;
+        }
     </style>
 </head>
 <body>
+    
+    <div id="debug-console"></div>
     
     <!-- SVG Filter for Liquid Effect -->
     <svg style="position: absolute; width: 0; height: 0;" xmlns="http://www.w3.org/2000/svg">
@@ -330,9 +340,7 @@
 
     <div id="game-container">
         <div class="crt-overlay"></div>
-        <!-- 墨水层：底层 -->
         <canvas id="inkCanvas" width="400" height="700"></canvas>
-        <!-- 游戏层：上层 -->
         <canvas id="gameCanvas" width="400" height="700"></canvas>
         
         <div id="countdown-display">READY</div>
@@ -354,7 +362,6 @@
             </div>
         </div>
 
-        <!-- 开始界面 -->
         <div id="start-overlay" class="overlay active">
             <div class="splat-text" style="color: #ff007f; text-shadow: 0 0 10px #ff007f;">INK SHOOTER</div>
             <button id="start-btn" class="main-btn">Start Battle</button>
@@ -362,14 +369,12 @@
             <div id="credits-start">作者：didi & nagi</div>
         </div>
 
-        <!-- 暂停界面 -->
         <div id="pause-overlay" class="overlay">
             <div class="paused-text">PAUSED</div>
             <button class="main-btn" onclick="togglePause()" style="margin-top: 30px; border-color: #f1c40f; color: #f1c40f;">RESUME</button>
             <button class="main-btn" onclick="showStartScreen()" style="margin-top: 15px; background-color: #e74c3c; border-color: #e74c3c; color: #fff; box-shadow: none;">EXIT TO TITLE</button>
         </div>
 
-        <!-- 重启确认界面 -->
         <div id="restart-overlay" class="overlay">
             <div class="splat-text" style="font-size: 32px;">RESTART?</div>
             <div style="display: flex; gap: 20px;">
@@ -378,7 +383,6 @@
             </div>
         </div>
 
-        <!-- 结束界面 -->
         <div id="game-over-overlay" class="overlay">
             <h2 class="splat-text" style="color: #ff007f; text-shadow: 0 0 15px #ff007f;">GAME OVER</h2>
             <p style="color: #fff; font-size: 20px; margin-bottom: 10px; font-family: monospace;">SCORE: <span id="final-score">0</span></p>
@@ -389,6 +393,22 @@
     </div>
 
     <script>
+        // 检测移动端设备
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        if (isMobile) {
+            document.body.classList.add('mobile-mode');
+        }
+        
+        // 简单的错误捕获
+        window.onerror = function(msg, url, line) {
+            // Uncomment to debug on mobile
+            // const debugEl = document.getElementById('debug-console');
+            // if(debugEl) {
+            //     debugEl.style.display = 'block';
+            //     debugEl.innerHTML += `Error: ${msg} at ${line} <br>`;
+            // }
+        };
+
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const inkCanvas = document.getElementById('inkCanvas');
@@ -493,25 +513,29 @@
         loadImages();
         
         function initHighScore() {
-            const saved = localStorage.getItem('splat_high_score');
-            const savedMute = localStorage.getItem('splat_is_muted'); 
-            
-            if (saved) {
-                highScore = parseInt(saved);
-            }
-            highScoreEl.innerText = highScore;
-            
-            if (savedMute === 'true') {
-                isMuted = true;
-                muteBtn.querySelector('i').textContent = '🔇';
+            try {
+                const saved = localStorage.getItem('splat_high_score');
+                const savedMute = localStorage.getItem('splat_is_muted'); 
+                
+                if (saved) {
+                    highScore = parseInt(saved);
+                }
+                highScoreEl.innerText = highScore;
+                
+                if (savedMute === 'true') {
+                    isMuted = true;
+                    if(muteBtn) muteBtn.querySelector('i').textContent = '🔇';
+                }
+            } catch(e) {
+                console.warn("LocalStorage access failed");
             }
         }
         initHighScore();
 
+        // 兼容性修复：Web Audio API
         const AudioContext = window.AudioContext || window.webkitAudioContext;
 
         async function initAudio() {
-            // 安全模式：即使音频 BGM 加载失败，也不要阻塞游戏
             try {
                 if (BGM_CUSTOM_URL && BGM_CUSTOM_URL.length > 50 && BGM_CUSTOM_URL.startsWith('data:audio/') && BGM_CUSTOM_URL !== "data:audio/mp3;base64,PLACEHOLDER_NO_BGM") {
                     if (!audioCtx) audioCtx = new AudioContext();
@@ -566,7 +590,7 @@
         
         function toggleMute() {
             isMuted = !isMuted;
-            localStorage.setItem('splat_is_muted', isMuted); 
+            try { localStorage.setItem('splat_is_muted', isMuted); } catch(e){}
             
             if (isMuted) {
                 muteBtn.querySelector('i').textContent = '🔇';
@@ -634,17 +658,15 @@
             startOverlay.classList.add('active');
         }
 
-        // --- 核心修复：更健壮的启动逻辑 ---
+        // --- 核心修复：更健壮的启动逻辑 (Click Event Only for Stability) ---
         const handleStartGame = (e) => {
             if (e) {
                 if(e.cancelable) e.preventDefault();
                 e.stopPropagation();
             }
 
-            // 1. UI 立即响应：隐藏遮罩
             startOverlay.classList.remove('active');
 
-            // 2. 音频解锁 (iOS 必须在同步代码块中创建/恢复)
             try {
                 if (!audioCtx) {
                     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -654,31 +676,30 @@
                     audioCtx.resume();
                 }
 
-                // 播放一个无声缓冲区，强制激活音频引擎
+                // 播放静音片段，强制激活
                 const buffer = audioCtx.createBuffer(1, 1, 22050);
                 const source = audioCtx.createBufferSource();
                 source.buffer = buffer;
                 source.connect(audioCtx.destination);
                 source.start(0);
                 
-                // 3. 后台加载 BGM (如果存在)，不阻塞游戏流程
                 initAudio().then(() => {
                     playBGM();
                 });
             } catch (err) {
-                console.error("Audio unlock failed:", err);
-                // 即使音频失败，也要继续游戏
+                console.warn("Audio error:", err);
             }
 
-            // 4. 启动游戏逻辑
             startCountdown();
         };
 
-        // 绑定事件到按钮
         if (startBtn) {
-            // 优先 touchstart 响应快
-            startBtn.addEventListener('touchstart', handleStartGame, { passive: false });
+            // 使用 click 保证触发，touchstart 优化延迟
             startBtn.addEventListener('click', handleStartGame);
+            startBtn.addEventListener('touchend', (e) => {
+                 e.preventDefault(); 
+                 startBtn.click();
+            });
         }
         
         function startCountdown() {
@@ -1431,6 +1452,29 @@
             ctx.stroke();
             ctx.restore();
         }
+        
+        function drawCountdownDisplay(ctx) {
+            ctx.save();
+            ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.translate(canvas.width/2, canvas.height/2);
+            if (countdownScale > 1) countdownScale -= 0.05;
+            ctx.scale(countdownScale, countdownScale);
+            
+            ctx.fillStyle = "#ff007f";
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 8;
+            ctx.font = "900 120px 'Courier New', monospace";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            
+            let text = countdownValue > 0 ? countdownValue : "PAINT!";
+            ctx.strokeText(text, 0, 0);
+            ctx.fillText(text, 0, 0);
+            
+            ctx.restore();
+        }
 
         function gameLoop(timestamp) {
             if (isPaused) return; 
@@ -1571,6 +1615,8 @@
                 }
             }
 
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
             ctx.save();
             if (shakeDuration > 0) {
                 ctx.translate(shakeX, shakeY);
@@ -1638,6 +1684,7 @@
         // 7. 事件监听修复：获取正确的相对坐标
         function getCanvasRelativeCoordinates(event) {
             const rect = canvas.getBoundingClientRect();
+            // 处理鼠标或触摸事件
             const clientX = event.clientX || (event.touches && event.touches[0].clientX);
             const clientY = event.clientY || (event.touches && event.touches[0].clientY);
             
@@ -1664,8 +1711,19 @@
                 const dy = pos.y - currentBubble.y;
                 let angle = Math.atan2(dy, dx);
                 
-                if (angle > -0.2) angle = -0.2;
-                if (angle < -Math.PI + 0.2) angle = -Math.PI + 0.2;
+                // 修复逻辑：防止在底部区域操作时，角度瞬间跳转到最右
+                // 如果角度是正数（向下），我们根据左右区分吸附
+                if (angle > 0 && angle < Math.PI) {
+                    if (angle > Math.PI / 2) {
+                        angle = -Math.PI + 0.2; // 极左
+                    } else {
+                        angle = -0.2; // 极右
+                    }
+                } else {
+                     // 正常的向上瞄准，进行限制
+                     if (angle > -0.2) angle = -0.2;
+                     if (angle < -Math.PI + 0.2) angle = -Math.PI + 0.2;
+                }
                 
                 currentBubble.angle = angle;
             }
@@ -1687,7 +1745,21 @@
                 if(e.cancelable) e.preventDefault();
                 swapBubbles();
             } else if (!currentBubble.moving) {
-                 // 只要点击在 canvas 区域内（除了底部交换区）都算发射
+                 // 【核心修复】发射前先更新角度指向点击位置
+                 const dx = pos.x - currentBubble.x;
+                 const dy = pos.y - currentBubble.y;
+                 let angle = Math.atan2(dy, dx);
+                 
+                 // 应用同样的角度限制逻辑
+                 if (angle > 0 && angle < Math.PI) {
+                    if (angle > Math.PI / 2) angle = -Math.PI + 0.2;
+                    else angle = -0.2;
+                 } else {
+                     if (angle > -0.2) angle = -0.2;
+                     if (angle < -Math.PI + 0.2) angle = -Math.PI + 0.2;
+                 }
+                 currentBubble.angle = angle;
+
                  if(e.cancelable) e.preventDefault();
                  SFX.shoot();
                  currentBubble.moving = true;
